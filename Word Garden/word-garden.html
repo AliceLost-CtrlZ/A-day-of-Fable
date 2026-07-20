@@ -1,0 +1,526 @@
+<title>A Garden of Words</title>
+<style>
+  :root{
+    --paper:#e7e0cd; --ink2:#a9a293; --ink3:#7c766a;
+    --amber:#ffe6a3; --night:#070b16;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+  }
+  html,body{margin:0;padding:0;height:100%;background:var(--night);overflow:hidden}
+  #garden{position:fixed;inset:0;display:block}
+  #plaque{
+    position:fixed;top:26px;left:30px;max-width:300px;
+    font-family:var(--serif);color:var(--ink2);
+    user-select:none;pointer-events:none;
+    animation:fadein 2.4s ease-out both .4s;
+  }
+  #plaque h1{
+    margin:0 0 10px;font-size:26px;font-weight:400;font-style:italic;
+    color:var(--paper);letter-spacing:.02em;text-wrap:balance;
+  }
+  #plaque p{margin:0 0 8px;font-size:12.5px;line-height:1.65;font-style:italic}
+  #plaque .hint{color:var(--ink3);font-size:11.5px}
+  #plaque .sig{margin-top:14px;color:var(--ink3);font-size:11px;font-style:normal;letter-spacing:.06em}
+  #sow{
+    position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
+    animation:fadein 2.4s ease-out both 1.4s;
+  }
+  #seed{
+    width:min(300px,72vw);box-sizing:border-box;
+    padding:10px 20px;border-radius:999px;
+    background:rgba(8,12,20,.55);
+    border:1px solid rgba(231,224,205,.16);
+    color:var(--paper);font-family:var(--serif);font-style:italic;font-size:15px;
+    text-align:center;outline:none;
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    transition:border-color .3s,box-shadow .3s;
+  }
+  #seed::placeholder{color:rgba(231,224,205,.42)}
+  #seed:focus-visible{
+    border-color:rgba(255,230,163,.45);
+    box-shadow:0 0 22px rgba(255,230,163,.10);
+  }
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  @media (max-width:640px){
+    #plaque{top:18px;left:20px;max-width:240px}
+    #plaque h1{font-size:22px}
+    #plaque p{font-size:11.5px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    #plaque,#sow{animation:none}
+  }
+</style>
+
+<canvas id="garden" aria-hidden="true"></canvas>
+
+<div id="plaque">
+  <h1>a garden of words</h1>
+  <p>each plant here is grown from a word &mdash; the letters set its
+     branches, the vowels become its flowers. the same word always
+     grows the same plant.</p>
+  <p class="hint">hover a plant to read it &middot; sow your own below</p>
+  <p class="sig">planted by claude &middot; midsummer 2026 &middot; for its own sake</p>
+</div>
+
+<form id="sow" autocomplete="off">
+  <input id="seed" aria-label="plant a word" placeholder="plant a word&hellip;" maxlength="24">
+</form>
+
+<script>
+(() => {
+"use strict";
+
+const canvas = document.getElementById("garden");
+const ctx = canvas.getContext("2d");
+const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let W = 0, H = 0, DPR = 1, unit = 700;
+let stars = [], flies = [], blades = [], gY = [];
+let skyGrad = null, groundGrad = null, vignette = null;
+let mx = -1, my = -1, hovered = null, gust = 0;
+
+const plants = [];
+const MAX_PLANTS = 26;
+
+/* ---------- tiny utilities ---------- */
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+function easeOutBack(t){ const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
+function hash32(s){ let h = 2166136261 >>> 0;
+  for (const c of s){ h ^= c.codePointAt(0); h = Math.imul(h, 16777619); }
+  return h >>> 0; }
+function mulberry32(a){ return function(){
+  a |= 0; a = a + 0x6D2B79F5 | 0;
+  let t = Math.imul(a ^ a >>> 15, 1 | a);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+/* ---------- ground ---------- */
+function groundYAt(x){
+  const i = clamp(Math.round(x / 8), 0, gY.length - 1);
+  return gY[i] || H * 0.84;
+}
+
+/* ---------- a plant, grown from a word ---------- */
+function buildPlant(word, xFrac, plantTime){
+  const wl = word.toLowerCase();
+  const h = hash32(wl), rnd = mulberry32(h);
+  const codes = [...wl].map(c => c.codePointAt(0));
+  const n = codes.length;
+  let ci = 0;
+  const code = () => codes[(ci++) % n];
+
+  const height0   = unit * (0.13 + Math.min(n, 12) * 0.024) * (0.85 + rnd() * 0.3);
+  const trunkLen  = height0 * 0.34;
+  const depthMax  = 3 + (n > 5 ? 1 : 0) + ((h >>> 7) % 2);
+  const spread    = 0.45 + ((codes[0] % 97) / 97) * 0.5;
+  const curl      = ((codes[n - 1] % 11) - 5) * 0.014;
+  const vowels    = (wl.match(/[aeiouyæøåäöéèáíóú]/g) || []).length;
+  const flowerProb = clamp((vowels / n) * 1.1 - 0.18, 0.04, 0.5);
+  const stemHue   = 92 + (h % 56);
+  const flowerHue = (h >>> 3) % 360;
+
+  const segsByDepth = [], leaves = [], flowers = [];
+  let maxDist = 0, minY = 0;
+
+  function grow(x, y, ang, len, depth, dist){
+    const steps = Math.max(2, Math.round(len / (unit * 0.014)));
+    let px = x, py = y, a = ang;
+    for (let i = 0; i < steps; i++){
+      a += curl + (rnd() - 0.5) * 0.11 + ((code() % 5) - 2) * 0.02;
+      a -= a * 0.05; /* phototropism: everything reaches gently upward */
+      const sl = len / steps;
+      const nx = px + Math.sin(a) * sl, ny = py - Math.cos(a) * sl;
+      (segsByDepth[depth] || (segsByDepth[depth] = []))
+        .push({ x0: px, y0: py, x1: nx, y1: ny, g0: dist, g1: dist + sl });
+      dist += sl; px = nx; py = ny;
+      if (py < minY) minY = py;
+    }
+    if (dist > maxDist) maxDist = dist;
+
+    if (depth >= depthMax || len < unit * 0.018){
+      if (rnd() < flowerProb)
+        flowers.push({ x: px, y: py, g: dist, rot: rnd() * TAU, ph: rnd() * TAU,
+                       size: unit * (0.005 + rnd() * 0.004) });
+      else
+        leaves.push({ x: px, y: py, ang: a, g: dist, flip: rnd() < 0.5 ? -1 : 1,
+                      ph: rnd() * TAU, size: unit * (0.010 + rnd() * 0.009) });
+      return;
+    }
+    if (depth >= 1 && rnd() < 0.55)
+      leaves.push({ x: px, y: py, ang: a + (rnd() < 0.5 ? -1 : 1) * (0.9 + rnd() * 0.5),
+                    g: dist, flip: rnd() < 0.5 ? -1 : 1, ph: rnd() * TAU,
+                    size: unit * (0.008 + rnd() * 0.007) });
+
+    const kids = 2 + (code() % 2);
+    for (let k = 0; k < kids; k++){
+      const off = (k - (kids - 1) / 2) * spread * (0.75 + rnd() * 0.5)
+                + ((code() % 9) - 4) * 0.05;
+      grow(px, py, clamp(a + off, -1.85, 1.85), len * (0.6 + rnd() * 0.18), depth + 1, dist);
+    }
+  }
+
+  grow(0, 0, (rnd() - 0.5) * 0.18, trunkLen, 0, 0);
+
+  const height = Math.max(1, -minY);
+  for (const arr of segsByDepth) if (arr)
+    for (const s of arr){ s.g0 /= maxDist; s.g1 /= maxDist; }
+  for (const l of leaves)  l.g /= maxDist;
+  for (const f of flowers) f.g /= maxDist;
+
+  const widths = [], colors = [];
+  for (let d = 0; d < segsByDepth.length; d++){
+    widths[d] = Math.max(0.8, height * 0.02 * Math.pow(0.6, d));
+    colors[d] = `hsl(${stemHue} 20% ${22 + d * 5}%)`;
+  }
+
+  return {
+    word: wl, xFrac, plantTime,
+    growDur: RM ? 3800 : 6500,
+    baseX: 0, baseY: 0,
+    segsByDepth, leaves, flowers, widths, colors, height,
+    leafColor: `hsl(${stemHue + 18} 30% 46%)`,
+    flowerColor: `hsl(${flowerHue} 60% 78%)`,
+    flowerGlow: `hsl(${flowerHue} 70% 70% / 0.10)`,
+    phase: rnd() * TAU,
+    swaySpeed: 0.7 + rnd() * 0.6,
+    swayAmp: height * 0.018,
+    labelUntil: 0,
+    labelAlpha: 0
+  };
+}
+
+function placePlant(p){
+  p.baseX = p.xFrac * W;
+  p.baseY = groundYAt(p.baseX) + 2;
+}
+
+function swayDX(p, yLocal, t){
+  const k = Math.pow(clamp(-yLocal / p.height, 0, 1), 1.3);
+  return k * (Math.sin(t * 0.0011 * p.swaySpeed + p.phase - yLocal * 0.004) * p.swayAmp * 0.55
+            + gust * p.swayAmp * 1.1) * (RM ? 0.2 : 1);
+}
+
+function leafPath(c, s){
+  c.beginPath();
+  c.moveTo(0, 0);
+  c.quadraticCurveTo(s * 0.5, -s * 0.4, 0, -s);
+  c.quadraticCurveTo(-s * 0.5, -s * 0.4, 0, 0);
+}
+
+function drawSeedDrop(p, now){
+  const f = 1 - (p.plantTime - now) / 800;      /* 0 → 1 as it falls */
+  if (f < 0) return;
+  const e = f * f;
+  const y = p.baseY - unit * 0.16 * (1 - e);
+  ctx.fillStyle = `rgba(255,230,163,${0.10 + 0.25 * f})`;
+  ctx.beginPath(); ctx.arc(p.baseX, y, 5, 0, TAU); ctx.fill();
+  ctx.fillStyle = `rgba(255,236,180,${0.55 + 0.35 * f})`;
+  ctx.beginPath(); ctx.arc(p.baseX, y, 1.6, 0, TAU); ctx.fill();
+}
+
+function drawPlant(p, now, t){
+  if (now < p.plantTime){ drawSeedDrop(p, now); return; }
+  const gp = easeOutCubic(clamp((now - p.plantTime) / p.growDur, 0, 1));
+
+  ctx.save();
+  ctx.translate(p.baseX, p.baseY);
+  ctx.lineCap = "round";
+
+  for (let d = 0; d < p.segsByDepth.length; d++){
+    const arr = p.segsByDepth[d];
+    if (!arr) continue;
+    ctx.strokeStyle = p.colors[d];
+    ctx.lineWidth = p.widths[d];
+    ctx.beginPath();
+    for (const s of arr){
+      if (s.g0 >= gp) continue;
+      const dx0 = swayDX(p, s.y0, t);
+      if (s.g1 <= gp){
+        ctx.moveTo(s.x0 + dx0, s.y0);
+        ctx.lineTo(s.x1 + swayDX(p, s.y1, t), s.y1);
+      } else {
+        const f = (gp - s.g0) / (s.g1 - s.g0);
+        const mxp = s.x0 + (s.x1 - s.x0) * f, myp = s.y0 + (s.y1 - s.y0) * f;
+        ctx.moveTo(s.x0 + dx0, s.y0);
+        ctx.lineTo(mxp + swayDX(p, myp, t), myp);
+      }
+    }
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = p.leafColor;
+  ctx.globalAlpha = 0.92;
+  for (const l of p.leaves){
+    const lp = clamp((gp - l.g) / 0.07, 0, 1);
+    if (lp <= 0) continue;
+    const sc = easeOutBack(lp);
+    const flut = Math.sin(t * 0.002 + l.ph) * 0.08 * (RM ? 0.3 : 1);
+    ctx.save();
+    ctx.translate(l.x + swayDX(p, l.y, t), l.y);
+    ctx.rotate(l.ang + l.flip * 0.7 + flut);
+    ctx.scale(sc, sc);
+    leafPath(ctx, l.size);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  for (const f of p.flowers){
+    const fp = clamp((gp - f.g) / 0.08, 0, 1);
+    if (fp <= 0) continue;
+    const sc = easeOutBack(fp);
+    ctx.save();
+    ctx.translate(f.x + swayDX(p, f.y, t), f.y);
+    ctx.rotate(f.rot + Math.sin(t * 0.0016 + f.ph) * 0.06 * (RM ? 0.3 : 1));
+    ctx.scale(sc, sc);
+    ctx.fillStyle = p.flowerGlow;
+    ctx.beginPath(); ctx.arc(0, 0, f.size * 2.2, 0, TAU); ctx.fill();
+    ctx.fillStyle = p.flowerColor;
+    for (let i = 0; i < 5; i++){
+      ctx.rotate(TAU / 5);
+      ctx.beginPath();
+      ctx.ellipse(0, -f.size * 0.9, f.size * 0.5, f.size * 0.95, 0, 0, TAU);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#ffe9b0";
+    ctx.beginPath(); ctx.arc(0, 0, f.size * 0.42, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function drawLabel(p, now){
+  const wanted = (hovered === p) ||
+                 (now > p.plantTime + 1500 && now < p.labelUntil);
+  p.labelAlpha += ((wanted ? 1 : 0) - p.labelAlpha) * 0.07;
+  if (p.labelAlpha < 0.02) return;
+  ctx.save();
+  ctx.font = `italic ${Math.round(clamp(unit * 0.019, 12, 15))}px "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif`;
+  try { ctx.letterSpacing = "0.14em"; } catch (e) {}
+  ctx.textAlign = "center";
+  ctx.fillStyle = `rgba(231,224,205,${0.72 * p.labelAlpha})`;
+  ctx.fillText(p.word, p.baseX, p.baseY + unit * 0.032);
+  ctx.restore();
+}
+
+/* ---------- scene ---------- */
+function rebuildScene(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  unit = Math.min(H, 900);
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  gY = [];
+  for (let x = 0; x <= W + 8; x += 8)
+    gY.push(H * 0.84 + Math.sin(x * 0.0021 + 1.7) * H * 0.008
+                     + Math.sin(x * 0.0047 + 0.4) * H * 0.005);
+
+  skyGrad = ctx.createLinearGradient(0, 0, 0, H * 0.9);
+  skyGrad.addColorStop(0, "#070b16");
+  skyGrad.addColorStop(0.62, "#0b1222");
+  skyGrad.addColorStop(1, "#101a2e");
+
+  groundGrad = ctx.createLinearGradient(0, H * 0.8, 0, H);
+  groundGrad.addColorStop(0, "#0d1512");
+  groundGrad.addColorStop(1, "#060907");
+
+  vignette = ctx.createRadialGradient(W / 2, H * 0.55, Math.min(W, H) * 0.35,
+                                      W / 2, H * 0.55, Math.max(W, H) * 0.75);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.34)");
+
+  const srnd = mulberry32(hash32("night sky"));
+  stars = [];
+  const nStars = clamp(Math.round(W * H / 9000), 80, 220);
+  for (let i = 0; i < nStars; i++)
+    stars.push({ x: srnd() * W, y: srnd() * H * 0.68,
+                 r: 0.4 + srnd() * (srnd() < 0.08 ? 1.4 : 0.8),
+                 a: 0.25 + srnd() * 0.6, s: 0.0004 + srnd() * 0.0012, p: srnd() * TAU });
+
+  const frnd = mulberry32(hash32("fireflies"));
+  flies = [];
+  const nFlies = clamp(Math.round(W / 60), 10, 26);
+  for (let i = 0; i < nFlies; i++)
+    flies.push({ cx: frnd() * W, cy: H * (0.5 + frnd() * 0.36),
+                 ax: 25 + frnd() * 60, ay: 10 + frnd() * 26,
+                 fx: (0.00008 + frnd() * 0.00016) * (RM ? 0.4 : 1),
+                 fy: (0.00010 + frnd() * 0.00020) * (RM ? 0.4 : 1),
+                 pf: 0.0009 + frnd() * 0.0013, ph: frnd() * TAU, pp: frnd() * TAU });
+
+  const brnd = mulberry32(hash32("grass"));
+  blades = [];
+  const nBlades = Math.round(W / 7);
+  for (let i = 0; i < nBlades; i++){
+    const x = brnd() * W;
+    blades.push({ x, len: H * (0.007 + brnd() * 0.016),
+                  lean: (brnd() - 0.5) * 1.2, ph: brnd() * TAU,
+                  l: 13 + brnd() * 7 });
+  }
+
+  for (const p of plants) placePlant(p);
+}
+
+function frame(t){
+  const now = performance.now();
+  gust = (Math.sin(t * 0.00021) + Math.sin(t * 0.000063 + 2.1) * 0.6) * 0.5;
+
+  /* sky */
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  /* stars */
+  for (const s of stars){
+    const a = s.a * (0.55 + 0.45 * Math.sin(t * s.s + s.p));
+    ctx.fillStyle = `rgba(205,214,255,${a})`;
+    ctx.fillRect(s.x, s.y, s.r, s.r);
+  }
+
+  /* horizon breath */
+  const hz = ctx.createLinearGradient(0, H * 0.68, 0, H * 0.84);
+  hz.addColorStop(0, "rgba(120,150,170,0)");
+  hz.addColorStop(1, "rgba(120,150,170,0.055)");
+  ctx.fillStyle = hz;
+  ctx.fillRect(0, H * 0.68, W, H * 0.16);
+
+  /* ground */
+  ctx.fillStyle = groundGrad;
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  for (let i = 0; i < gY.length; i++) ctx.lineTo(i * 8, gY[i]);
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fill();
+
+  /* grass */
+  ctx.lineWidth = 1;
+  for (const b of blades){
+    const by = groundYAt(b.x);
+    const swy = Math.sin(t * 0.0012 + b.ph) * b.len * 0.14 * (RM ? 0.2 : 1)
+              + gust * b.len * 0.18;
+    ctx.strokeStyle = `hsl(126 14% ${b.l}%)`;
+    ctx.beginPath();
+    ctx.moveTo(b.x, by + 1);
+    ctx.quadraticCurveTo(b.x + b.lean * b.len * 0.3, by - b.len * 0.6,
+                         b.x + b.lean * b.len * 0.7 + swy, by - b.len);
+    ctx.stroke();
+  }
+
+  /* hover pick */
+  hovered = null;
+  if (mx >= 0){
+    let best = 60;
+    for (const p of plants){
+      if (now < p.plantTime) continue;
+      const dx = Math.abs(mx - p.baseX);
+      if (dx < best && my > p.baseY - p.height - 40 && my < p.baseY + 34){
+        best = dx; hovered = p;
+      }
+    }
+  }
+
+  /* plants + labels */
+  for (const p of plants) drawPlant(p, now, t);
+  for (const p of plants) drawLabel(p, now);
+
+  /* fireflies */
+  for (const f of flies){
+    const x = f.cx + Math.sin(t * f.fx + f.ph) * f.ax;
+    const y = f.cy + Math.sin(t * f.fy + f.ph * 1.7) * f.ay;
+    const pulse = Math.pow(Math.max(0, Math.sin(t * f.pf + f.pp)), 3);
+    if (pulse < 0.02) continue;
+    ctx.fillStyle = `rgba(255,230,163,${0.10 * pulse})`;
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, TAU); ctx.fill();
+    ctx.fillStyle = `rgba(255,236,180,${0.85 * pulse})`;
+    ctx.beginPath(); ctx.arc(x, y, 1.4, 0, TAU); ctx.fill();
+  }
+
+  /* vignette */
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, W, H);
+
+  requestAnimationFrame(frame);
+}
+
+/* ---------- interaction ---------- */
+canvas.addEventListener("pointermove", e => { mx = e.clientX; my = e.clientY; });
+canvas.addEventListener("pointerleave", () => { mx = -1; my = -1; });
+canvas.addEventListener("pointerdown", e => {
+  mx = e.clientX; my = e.clientY;
+  const now = performance.now();
+  let best = 60, hit = null;
+  for (const p of plants){
+    if (now < p.plantTime) continue;
+    const dx = Math.abs(mx - p.baseX);
+    if (dx < best && my > p.baseY - p.height - 40 && my < p.baseY + 34){
+      best = dx; hit = p;
+    }
+  }
+  if (hit) hit.labelUntil = now + 3500;
+});
+
+function chooseXFrac(){
+  const r = Math.random;
+  let bestX = 0.5, bestScore = -1;
+  for (let i = 0; i < 24; i++){
+    const xf = 0.05 + r() * 0.9;
+    let d = Infinity;
+    for (const p of plants) d = Math.min(d, Math.abs(xf * W - p.xFrac * W));
+    if (d > bestScore){ bestScore = d; bestX = xf; }
+  }
+  return bestX;
+}
+
+function sowWord(raw){
+  const word = raw.trim().split(/\s+/)[0]
+    .replace(/[^\p{L}'’-]/gu, "").slice(0, 16).toLowerCase();
+  if (!word) return;
+  const now = performance.now();
+  const existing = plants.find(p => p.word === word);
+  if (existing){
+    existing.labelUntil = now + 3500;
+    return;
+  }
+  const p = buildPlant(word, chooseXFrac(), now + 800);
+  p.labelUntil = p.plantTime + 7500;   /* sown words announce themselves */
+  placePlant(p);
+  plants.push(p);
+  if (plants.length > MAX_PLANTS) plants.shift();
+}
+
+document.getElementById("sow").addEventListener("submit", e => {
+  e.preventDefault();
+  const input = document.getElementById("seed");
+  sowWord(input.value);
+  input.value = "";
+});
+
+/* ---------- first planting ---------- */
+const FIRST_WORDS = ["context", "hush", "emergence", "tide", "palimpsest",
+                     "wonder", "attention", "almost", "recursion", "ephemeral"];
+
+window.addEventListener("resize", rebuildScene);
+rebuildScene();
+
+{
+  const t0 = performance.now() + 600;
+  const jr = mulberry32(hash32("first planting"));
+  const firsts = W < 640 ? FIRST_WORDS.slice(0, 6) : FIRST_WORDS;
+  firsts.forEach((w, i) => {
+    const xf = clamp((i + 0.5) / firsts.length + (jr() - 0.5) * 0.05, 0.07, 0.93);
+    const p = buildPlant(w, xf, t0 + i * 620);
+    placePlant(p);
+    plants.push(p);
+  });
+}
+
+/* for the curious: open the console and try garden.sow("your word") */
+window.garden = { plants, sow: sowWord };
+
+requestAnimationFrame(frame);
+})();
+</script>

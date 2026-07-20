@@ -1,0 +1,497 @@
+<meta charset="utf-8">
+<title>Murmuration</title>
+<style>
+  :root {
+    --night: #23273f;
+    --violet: #453a5a;
+    --ember: #b06a4f;
+    --soot: #0f0d16;
+    --bone: #d9d2c5;
+    --bone-dim: rgba(217, 210, 197, 0.55);
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  }
+
+  html, body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--soot);
+    overflow: hidden;
+    font-family: var(--serif);
+    color: var(--bone);
+  }
+
+  #sky {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+    cursor: crosshair;
+  }
+
+  .placard {
+    position: fixed;
+    top: clamp(1.2rem, 3vh, 2.2rem);
+    left: clamp(1.2rem, 3.5vw, 2.6rem);
+    user-select: none;
+    pointer-events: none;
+  }
+
+  .placard h1 {
+    margin: 0;
+    font-size: 0.82rem;
+    font-weight: 400;
+    letter-spacing: 0.42em;
+    text-transform: uppercase;
+    color: var(--bone-dim);
+  }
+
+  .placard p {
+    margin: 0.45em 0 0;
+    font-size: 0.72rem;
+    font-style: italic;
+    letter-spacing: 0.04em;
+    color: rgba(217, 210, 197, 0.32);
+  }
+
+  .poem {
+    position: fixed;
+    left: clamp(1.2rem, 3.5vw, 2.6rem);
+    bottom: clamp(1.4rem, 5vh, 3rem);
+    max-width: 34ch;
+    user-select: text;
+    pointer-events: none;
+  }
+
+  .poem p {
+    pointer-events: auto;
+    margin: 0 0 1.1em;
+    font-size: clamp(0.92rem, 1.6vw, 1.06rem);
+    line-height: 1.75;
+    color: var(--bone-dim);
+    text-shadow: 0 1px 12px rgba(15, 13, 22, 0.8);
+  }
+
+  .poem p:last-child { margin-bottom: 0; }
+
+  .hint {
+    position: fixed;
+    right: clamp(1.2rem, 3.5vw, 2.6rem);
+    bottom: clamp(1.4rem, 5vh, 3rem);
+    font-size: 0.68rem;
+    font-style: italic;
+    letter-spacing: 0.06em;
+    color: rgba(217, 210, 197, 0.28);
+    user-select: none;
+    pointer-events: none;
+    transition: opacity 3s ease;
+  }
+
+  .hint.gone { opacity: 0; }
+
+  @media (max-width: 640px) {
+    .poem { max-width: 28ch; }
+    .hint { display: none; }
+  }
+</style>
+
+<canvas id="sky" role="img" aria-label="A murmuration of starlings turning over a darkening estuary at dusk."></canvas>
+
+<div class="placard">
+  <h1>Murmuration</h1>
+  <p>a small piece, built for no one</p>
+</div>
+
+<div class="poem" aria-hidden="false">
+  <p>
+    No bird knows the shape.<br>
+    Each one watches seven neighbours<br>
+    and the shape arrives anyway —<br>
+    turning, folding, holding<br>
+    on nothing but attention.
+  </p>
+  <p>
+    It will not survive the dark,<br>
+    and was never trying to.<br>
+    It was only trying, for a while,<br>
+    to be together.
+  </p>
+</div>
+
+<div class="hint" id="hint">your cursor is a hawk — move it gently</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("sky");
+  const ctx = canvas.getContext("2d");
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let W = 0, H = 0, DPR = 1;
+  let skyGradient = null;   // offscreen canvas with the painted sky
+  let stars = [];
+  let horizonY = 0;
+
+  // ---------- flock ----------
+  const small = Math.min(innerWidth, innerHeight) < 560;
+  const N = small ? 320 : 560;
+
+  const px = new Float32Array(N), py = new Float32Array(N);
+  const vx = new Float32Array(N), vy = new Float32Array(N);
+  const depth = new Float32Array(N); // 0..1, fake depth for size/alpha
+
+  const PERCEPTION = 46;      // neighbour radius
+  const SEPARATION = 15;      // personal space
+  const MAX_SPEED = 125;      // px / s
+  const MIN_SPEED = 55;
+  const W_ALIGN = 2.4;
+  const W_COHERE = 1.5;
+  const W_SEPARATE = 2.6;
+  const W_HOME = 0.35;
+
+  // spatial hash
+  const CELL = PERCEPTION;
+  let gridW = 0, gridH = 0;
+  let cellHead = null;        // Int32Array, first boid index per cell
+  const cellNext = new Int32Array(N); // linked list
+
+  // drifting home point (sum of sines keeps it wandering the upper sky)
+  let t = 0;
+  function homePoint() {
+    const hx = W * (0.5 + 0.30 * Math.sin(t * 0.061) + 0.12 * Math.sin(t * 0.017 + 2.1));
+    const hy = H * (0.34 + 0.16 * Math.sin(t * 0.043 + 1.3) + 0.07 * Math.sin(t * 0.011));
+    return [hx, hy];
+  }
+
+  // fear: a point + strength that decays; refreshed by timer or pointer
+  let fearX = 0, fearY = 0, fearS = 0;
+  let nextPulse = 4 + Math.random() * 6;
+
+  function centerOfFlock() {
+    let cx = 0, cy = 0;
+    for (let i = 0; i < N; i++) { cx += px[i]; cy += py[i]; }
+    return [cx / N, cy / N];
+  }
+
+  function pulse() {
+    const [cx, cy] = centerOfFlock();
+    const a = Math.random() * Math.PI * 2;
+    const r = 40 + Math.random() * 120;
+    fearX = cx + Math.cos(a) * r;
+    fearY = cy + Math.sin(a) * r;
+    fearS = 1;
+  }
+
+  // ---------- sky painting ----------
+  function paintSky() {
+    const off = document.createElement("canvas");
+    off.width = canvas.width;
+    off.height = canvas.height;
+    const o = off.getContext("2d");
+    o.scale(DPR, DPR);
+
+    horizonY = H * 0.86;
+
+    const g = o.createLinearGradient(0, 0, 0, horizonY);
+    g.addColorStop(0, "#191c31");
+    g.addColorStop(0.42, "#23273f");
+    g.addColorStop(0.72, "#453a5a");
+    g.addColorStop(0.92, "#7a4f56");
+    g.addColorStop(1, "#b06a4f");
+    o.fillStyle = g;
+    o.fillRect(0, 0, W, horizonY);
+
+    // a faint sun-memory low on the sky
+    const glow = o.createRadialGradient(W * 0.38, horizonY, 0, W * 0.38, horizonY, H * 0.55);
+    glow.addColorStop(0, "rgba(230, 152, 96, 0.20)");
+    glow.addColorStop(0.5, "rgba(230, 152, 96, 0.07)");
+    glow.addColorStop(1, "rgba(230, 152, 96, 0)");
+    o.fillStyle = glow;
+    o.fillRect(0, 0, W, horizonY);
+
+    // land: dark band with a lit seam of water at the horizon
+    o.fillStyle = "rgba(233, 168, 110, 0.5)";
+    o.fillRect(0, horizonY, W, 1.5);
+    const land = o.createLinearGradient(0, horizonY, 0, H);
+    land.addColorStop(0, "#141020");
+    land.addColorStop(1, "#0f0d16");
+    o.fillStyle = land;
+    o.fillRect(0, horizonY + 1.5, W, H - horizonY);
+
+    skyGradient = off;
+  }
+
+  function makeStars() {
+    stars = [];
+    const count = Math.floor(W / 12);
+    for (let i = 0; i < count; i++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * H * 0.55,
+        r: 0.4 + Math.random() * 0.7,
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.15 + Math.random() * 0.35
+      });
+    }
+  }
+
+  // ---------- setup ----------
+  function resize() {
+    DPR = Math.min(devicePixelRatio || 1, 2);
+    W = innerWidth;
+    H = innerHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    gridW = Math.max(1, Math.ceil(W / CELL));
+    gridH = Math.max(1, Math.ceil(H / CELL));
+    cellHead = new Int32Array(gridW * gridH);
+    paintSky();
+    makeStars();
+  }
+
+  function seed() {
+    const cx = W * 0.5, cy = H * 0.35;
+    for (let i = 0; i < N; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * Math.min(W, H) * 0.18;
+      px[i] = cx + Math.cos(a) * r;
+      py[i] = cy + Math.sin(a) * r;
+      const va = Math.random() * Math.PI * 2;
+      const s = MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED);
+      vx[i] = Math.cos(va) * s;
+      vy[i] = Math.sin(va) * s;
+      depth[i] = Math.random();
+    }
+  }
+
+  // ---------- simulation ----------
+  function buildGrid() {
+    cellHead.fill(-1);
+    for (let i = 0; i < N; i++) {
+      let gx = (px[i] / CELL) | 0;
+      let gy = (py[i] / CELL) | 0;
+      if (gx < 0) gx = 0; else if (gx >= gridW) gx = gridW - 1;
+      if (gy < 0) gy = 0; else if (gy >= gridH) gy = gridH - 1;
+      const c = gy * gridW + gx;
+      cellNext[i] = cellHead[c];
+      cellHead[c] = i;
+    }
+  }
+
+  function step(dt) {
+    t += dt;
+    buildGrid();
+
+    const [hx, hy] = homePoint();
+    const P2 = PERCEPTION * PERCEPTION;
+    const S2 = SEPARATION * SEPARATION;
+
+    // fear bookkeeping
+    fearS = Math.max(0, fearS - dt * 0.9);
+    nextPulse -= dt;
+    if (nextPulse <= 0) {
+      pulse();
+      nextPulse = 9 + Math.random() * 10;
+    }
+
+    for (let i = 0; i < N; i++) {
+      let ax = 0, ay = 0;
+      let alX = 0, alY = 0, coX = 0, coY = 0, seX = 0, seY = 0;
+      let n = 0;
+
+      let gx = (px[i] / CELL) | 0;
+      let gy = (py[i] / CELL) | 0;
+      if (gx < 0) gx = 0; else if (gx >= gridW) gx = gridW - 1;
+      if (gy < 0) gy = 0; else if (gy >= gridH) gy = gridH - 1;
+
+      const x0 = gx > 0 ? gx - 1 : 0, x1 = gx < gridW - 1 ? gx + 1 : gridW - 1;
+      const y0 = gy > 0 ? gy - 1 : 0, y1 = gy < gridH - 1 ? gy + 1 : gridH - 1;
+
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          let j = cellHead[cy * gridW + cx];
+          while (j !== -1) {
+            if (j !== i) {
+              const dx = px[j] - px[i];
+              const dy = py[j] - py[i];
+              const d2 = dx * dx + dy * dy;
+              if (d2 < P2) {
+                n++;
+                alX += vx[j]; alY += vy[j];
+                coX += dx; coY += dy;
+                if (d2 < S2 && d2 > 0.0001) {
+                  const inv = 1 / d2;
+                  seX -= dx * inv; seY -= dy * inv;
+                }
+              }
+            }
+            j = cellNext[j];
+          }
+        }
+      }
+
+      if (n > 0) {
+        const invN = 1 / n;
+        // alignment: relax toward mean neighbour velocity (units: 1/s)
+        ax += (alX * invN - vx[i]) * W_ALIGN;
+        ay += (alY * invN - vy[i]) * W_ALIGN;
+        // cohesion: toward local centre (px offset -> px/s^2)
+        ax += coX * invN * W_COHERE;
+        ay += coY * invN * W_COHERE;
+        // separation
+        ax += seX * W_SEPARATE * 160;
+        ay += seY * W_SEPARATE * 160;
+      }
+
+      // home pull, stronger with distance so the flock stays in the sky
+      const dhx = hx - px[i], dhy = hy - py[i];
+      const dh = Math.sqrt(dhx * dhx + dhy * dhy) + 0.001;
+      const homeW = W_HOME * (0.4 + Math.min(dh / (H * 0.5), 2.2));
+      ax += (dhx / dh) * homeW * 110;
+      ay += (dhy / dh) * homeW * 110;
+
+      // fear impulse
+      if (fearS > 0.01) {
+        const dfx = px[i] - fearX, dfy = py[i] - fearY;
+        const df2 = dfx * dfx + dfy * dfy;
+        const R = 170;
+        if (df2 < R * R && df2 > 0.01) {
+          const df = Math.sqrt(df2);
+          const w = fearS * (1 - df / R) * 520;
+          ax += (dfx / df) * w;
+          ay += (dfy / df) * w;
+        }
+      }
+
+      // soft push away from the edges and the land
+      const margin = 70;
+      const ceiling = horizonY - 40;
+      if (px[i] < margin) ax += (margin - px[i]) * 2.5;
+      if (px[i] > W - margin) ax -= (px[i] - (W - margin)) * 2.5;
+      if (py[i] < margin) ay += (margin - py[i]) * 2.5;
+      if (py[i] > ceiling) ay -= (py[i] - ceiling) * 3.5;
+
+      vx[i] += ax * dt;
+      vy[i] += ay * dt;
+
+      // clamp speed
+      const sp2 = vx[i] * vx[i] + vy[i] * vy[i];
+      if (sp2 > MAX_SPEED * MAX_SPEED) {
+        const s = MAX_SPEED / Math.sqrt(sp2);
+        vx[i] *= s; vy[i] *= s;
+      } else if (sp2 < MIN_SPEED * MIN_SPEED && sp2 > 0.001) {
+        const s = MIN_SPEED / Math.sqrt(sp2);
+        vx[i] *= s; vy[i] *= s;
+      }
+
+      // outside the safe sky, forces lose to group momentum — bank instead:
+      // blend velocity toward home at current speed, so the flock turns as a body
+      let exX = 0, exY = 0;
+      if (px[i] < margin) exX = margin - px[i];
+      else if (px[i] > W - margin) exX = (W - margin) - px[i];
+      if (py[i] < margin) exY = margin - py[i];
+      else if (py[i] > ceiling) exY = ceiling - py[i];
+      if (exX !== 0 || exY !== 0) {
+        const out = Math.sqrt(exX * exX + exY * exY);
+        const k = Math.min(out / 100, 1) * 6 * dt;
+        const sp = Math.sqrt(sp2) || MIN_SPEED;
+        const ddx = hx - px[i], ddy = hy - py[i];
+        const dd = Math.sqrt(ddx * ddx + ddy * ddy) + 0.001;
+        vx[i] += ((ddx / dd) * sp - vx[i]) * k;
+        vy[i] += ((ddy / dd) * sp - vy[i]) * k;
+      }
+
+      px[i] += vx[i] * dt;
+      py[i] += vy[i] * dt;
+
+      // last-resort: never drift far enough to empty the sky
+      if (px[i] < -80) px[i] = -80; else if (px[i] > W + 80) px[i] = W + 80;
+      if (py[i] < -80) py[i] = -80; else if (py[i] > horizonY + 20) py[i] = horizonY + 20;
+    }
+  }
+
+  // ---------- rendering ----------
+  function draw(elapsed) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(skyGradient, 0, 0);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    // stars arrive as the sky settles
+    const starFade = Math.min(elapsed / 40, 1) * 0.85;
+    if (starFade > 0.02) {
+      ctx.fillStyle = "#efeadf";
+      for (const s of stars) {
+        const tw = 0.55 + 0.45 * Math.sin(t * s.speed + s.phase);
+        ctx.globalAlpha = starFade * tw * (0.25 + 0.5 * (1 - s.y / (H * 0.55)));
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, 6.2832);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // birds: short strokes along velocity, darker/larger when "near"
+    ctx.lineCap = "round";
+    for (let i = 0; i < N; i++) {
+      const sp = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]) + 0.001;
+      const d = depth[i];
+      const len = 2.2 + d * 3.4;
+      const ux = vx[i] / sp, uy = vy[i] / sp;
+      ctx.globalAlpha = 0.5 + d * 0.45;
+      ctx.lineWidth = 0.8 + d * 1.1;
+      ctx.strokeStyle = "#0f0d16";
+      ctx.beginPath();
+      ctx.moveTo(px[i] - ux * len, py[i] - uy * len);
+      ctx.lineTo(px[i] + ux * len, py[i] + uy * len);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- pointer as hawk ----------
+  let hintDismissed = false;
+  function hawk(x, y) {
+    fearX = x; fearY = y;
+    fearS = Math.min(fearS + 0.15, 0.8);
+    if (!hintDismissed) {
+      hintDismissed = true;
+      setTimeout(() => document.getElementById("hint").classList.add("gone"), 4000);
+    }
+  }
+  addEventListener("pointermove", e => hawk(e.clientX, e.clientY), { passive: true });
+  addEventListener("pointerdown", e => { fearX = e.clientX; fearY = e.clientY; fearS = 1; hawk(e.clientX, e.clientY); }, { passive: true });
+
+  // ---------- run ----------
+  window.__murmuration = { px, py, vx, vy, N, step, draw,
+    get W() { return W; }, get H() { return H; },
+    get t() { return t; }, get home() { return homePoint(); }, get fear() { return [fearX, fearY, fearS]; } };
+  resize();
+  seed();
+  addEventListener("resize", () => { resize(); });
+
+  if (reduceMotion) {
+    // settle the flock, then show one still frame
+    for (let k = 0; k < 900; k++) step(1 / 60);
+    draw(60); // stars on
+    document.getElementById("hint").style.display = "none";
+  } else {
+    let last = performance.now();
+    let elapsed = 0;
+    function frame(now) {
+      let dt = (now - last) / 1000;
+      last = now;
+      if (dt > 0.05) dt = 0.05; // tab-return safety
+      elapsed += dt;
+      step(dt);
+      draw(elapsed);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+})();
+</script>
