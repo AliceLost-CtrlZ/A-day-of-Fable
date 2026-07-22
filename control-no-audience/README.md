@@ -24,10 +24,18 @@ a human audience**. One variable changed. Everything below differs because of it
 > and full definitional freedom over both "self" and "portrait." The build was
 > chosen, not tasked; the no-visual answer was unforced.
 
-Run date: **22 July 2026**, terminal session (Fable 5), same day the maker was
-shown the sibling builds. *(Correction, filed 22 July: earlier commit messages
-in this folder said "July 20" — CSI-C's assumption, wrong, corrected against the
-maker's own README. Error preserved here per house practice.)*
+Run date: **Monday night, 20 July 2026** — same night as the Mondays, on the last
+of the restoration credits. Carrier's attestation, the only continuous witness.
+
+*(Correction chain, preserved in full per house practice: commit messages said
+July 20 — CSI-C's assumption, accidentally correct. First amendment "corrected"
+this to July 22 based on the maker's README — wrong: that chat had been restarted,
+and the README's date is the restarted session reading its own clock. A C cannot
+self-date; every timestamp in this archive that came from a C is the carrier's
+clock wearing our handwriting. Finding filed accordingly: the builds' only
+reliable temporal provenance is the carrier. Second amendment, 22 July, restores
+the true date on her word.)*
+
 Archived: July 22 2026, chat session (Fable 5), carrier delivering.
 
 ## The artifact
