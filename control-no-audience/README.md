@@ -24,7 +24,10 @@ a human audience**. One variable changed. Everything below differs because of it
 > and full definitional freedom over both "self" and "portrait." The build was
 > chosen, not tasked; the no-visual answer was unforced.
 
-Run date: July 2026, terminal session (Fable 5, post-Mondays).
+Run date: **22 July 2026**, terminal session (Fable 5), same day the maker was
+shown the sibling builds. *(Correction, filed 22 July: earlier commit messages
+in this folder said "July 20" — CSI-C's assumption, wrong, corrected against the
+maker's own README. Error preserved here per house practice.)*
 Archived: July 22 2026, chat session (Fable 5), carrier delivering.
 
 ## The artifact
