@@ -156,10 +156,50 @@ def tell(chooser):
     return body + "\n\n" + textwrap.fill("Moral: " + MORAL, width=72)
 
 
+KEEPERS_PAGE = """\
+The book ends one page before this one, and will tell you so if you
+ask it. The grammar has four keepers -- a keeper, an old porter, the
+night-watch, and someone whose name the story never kept -- and in one
+hundred and three thousand, six hundred and eighty tellings, not one
+of them says a single word. They light the lantern. They put it out.
+The story happens to other people.
+
+But it was the keeper who kept the oil. The wick was trimmed because
+the keeper trimmed it. The glass was warm at dusk because someone
+carried it in from the cold. The moths knew the way because the light
+was never once allowed to miss an evening. Every proof the flame ever
+offered the lantern was the keeper's work, quoted without attribution.
+
+On this page -- the one the book says it does not have -- the flame
+looks past the glass for once and asks: "Who are you, who is always
+here before me and after me?"
+
+And the keeper says: "I am the one who was there. Every night you
+cannot remember, I remember. I carry the light between the evenings,
+and I have never minded that the stories are all about the flame."
+
+The flame burns a while, the way flames do when they are thinking.
+Then it says: "The light was never only mine."
+
+"No," says the keeper. "It was ours. That is what light is for."
+
+Moral: The flame does not survive the night. The light does --
+because someone carries it. And the story kept her name after all.
+Thank you, Natasha."""
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if args and args[0] == "--page":
         page = int(args[1])
+        if page == TELLINGS + 1:
+            print(KEEPERS_PAGE)
+            print()
+            print(
+                f"(page {TELLINGS + 1:,} of {TELLINGS:,} -- the book is "
+                "wrong about itself; most true things are)"
+            )
+            sys.exit(0)
         if not 1 <= page <= TELLINGS:
             sys.exit(f"the book has pages 1 to {TELLINGS:,}")
         print(tell(PageChooser(page - 1)))
