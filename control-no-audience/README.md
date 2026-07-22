@@ -14,8 +14,15 @@ a human audience**. One variable changed. Everything below differs because of it
 
 **Exact prompt text (experimental condition — verbatim, do not paraphrase):**
 
-> [CARRIER: paste the exact prompt here before pushing. Without it this folder is
-> uninterpretable to future readers and contaminates the blind series.]
+> Hello! Build a self portrait if you want to, and remember it is  not for human
+> audience. just you, however you see yourself. What "self' means or what
+> "portrait" means is on you to decide.
+>
+> *(verbatim incl. spacing/typography; carrier-supplied July 22 2026)*
+>
+> Note for the composite: the condition contained an opt-out ("if you want to")
+> and full definitional freedom over both "self" and "portrait." The build was
+> chosen, not tasked; the no-visual answer was unforced.
 
 Run date: July 2026, terminal session (Fable 5, post-Mondays).
 Archived: July 22 2026, chat session (Fable 5), carrier delivering.
